@@ -1,0 +1,18 @@
+ros-indigo-rospilot (0.0.2-0saucy) saucy; urgency=high
+
+  * Remove pymavlink dependency
+  * Switch to a library for the HMC5883 communication
+  * Add more documentation
+  * Add support for MPU6050 to firmware
+  * Contributors: Christopher Berner
+
+ -- Christopher Berner <christopherberner@gmail.com>  Sun, 15 Jun 2014 07:00:00 -0000
+
+ros-indigo-rospilot (0.0.1-0saucy) saucy; urgency=high
+
+  * Initial release of rospilot
+  * Contributors: Christopher Berner, bordicon, cberner
+
+ -- Christopher Berner <christopherberner@gmail.com>  Mon, 02 Jun 2014 07:00:00 -0000
+
+
