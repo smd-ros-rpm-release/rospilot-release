@@ -2,6 +2,12 @@
 Changelog for package rospilot
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.0.4 (2014-07-05)
+------------------
+* Use more standard compliant glob syntax
+* Make .gitignore less aggressive
+* Contributors: Christopher Berner
+
 0.0.3 (2014-06-28)
 ------------------
 * Change web_ui to use pkg_resources for static assets
