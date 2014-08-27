@@ -2,6 +2,12 @@
 Changelog for package rospilot
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.1.0 (2014-08-26)
+------------------
+* Add PTP support
+* Add init.d script to auto start rospilot
+* Contributors: Christopher Berner
+
 0.0.4 (2014-07-05)
 ------------------
 * Use more standard compliant glob syntax
