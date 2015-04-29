@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package>
   <name>rospilot</name>
-  <version>0.2.0</version>
+  <version>0.2.1</version>
   <description>rospilot</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag --> 
@@ -50,8 +50,9 @@
   <build_depend>roscpp</build_depend>
   <build_depend>rospilot_deps</build_depend>
   <build_depend>ffmpeg</build_depend>
-  <build_depend>libnl-dev</build_depend>
+  <build_depend>libnl-3-dev</build_depend>
 
+  <run_depend>libnl-3</run_depend>
   <run_depend>rosbash</run_depend>
   <run_depend>dnsmasq</run_depend>
   <run_depend>hostapd</run_depend>
