@@ -2,6 +2,11 @@
 Changelog for package rospilot
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.2.3 (2015-05-02)
+------------------
+* Fix deprecation warnings
+* Contributors: Christopher Berner
+
 0.2.2 (2015-04-30)
 ------------------
 * Change CodecID to AVCodecID
