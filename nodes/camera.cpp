@@ -26,6 +26,7 @@
 #include<dirent.h>
 #include<sys/ioctl.h>
 #include<fcntl.h>
+#include<errno.h>
 
 #include<ros/ros.h>
 #include<rospilot/CaptureImage.h>
@@ -60,6 +61,7 @@ private:
 
     std::string videoDevice;
     std::string codec; // "mjpeg" or "h264"
+    std::string mfcPath;
     AVCodecID codecId;
     std::string mediaPath;
     int width;
@@ -205,10 +207,11 @@ public:
                 "stop_record", 
                 &CameraNode::stopRecordHandler,
                 this);
+        mfcPath = findMfcDevice();
         initCameraAndEncoders();
     }
 
-    bool mfcDeviceIsPresent()
+    std::string findMfcDevice()
     {
         // Look for the MFC
         DIR *dir = opendir("/dev");
@@ -223,12 +226,12 @@ public:
             }
             ROS_INFO("Querying %s", path.c_str());
             if((fd = open(path.c_str(), O_RDONLY)) == -1){
-                ROS_WARN("Can't open %s", path.c_str());
+                ROS_WARN("Can't open %s: %s", path.c_str(), strerror(errno));
                 continue;
             }
 
             if(ioctl(fd, VIDIOC_QUERYCAP, &videoCap) == -1) {
-                ROS_WARN("Can't read from %s", path.c_str());
+                ROS_WARN("Can't read from %s: %s", path.c_str(), strerror(errno));
             }
             else {
                 if (std::string((char *) videoCap.driver) == "s5p-mfc") {
@@ -245,22 +248,25 @@ public:
                     ctrls.controls = &ctrl;
                     
                     if(ioctl(fd, VIDIOC_G_EXT_CTRLS, &ctrls) == 0) {
-                        return true;
+                        close(fd);
+                        return path;
                     }
                 }
             }
+            close(fd);
         }
         closedir(dir);
-        return false;
+        return "";
     }
 
     H264Encoder *createEncoder()
     {
-        if (mfcDeviceIsPresent()) {
+        if (mfcPath.size() > 0) {
             ROS_INFO("Using hardware encoder");
-            return new ExynosMultiFormatCodecH264Encoder(width, height);
+            return new ExynosMultiFormatCodecH264Encoder(mfcPath, width, height);
         }
         else {
+            ROS_INFO("Using software encoder");
             return new SoftwareH264Encoder(width, height);
         }
     }
@@ -308,11 +314,6 @@ public:
         char str[100];
         strftime(str, sizeof(str), "%Y-%m-%d_%H%M%S.mp4", tmp);
         std::string path = mediaPath + "/" + str;
-        // Reset the encoder
-        if (h264Encoder != nullptr) {
-            delete h264Encoder;
-        }
-        h264Encoder = createEncoder();
         return videoRecorder->start(path.c_str());
     }
     
