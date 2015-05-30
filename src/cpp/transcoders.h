@@ -32,7 +32,7 @@ class H264Encoder
 public:
     virtual bool encodeInPlace(sensor_msgs::CompressedImage *image, 
             bool *keyFrame) = 0;
-    
+
     virtual ~H264Encoder() {};
 };
 
@@ -42,6 +42,8 @@ public:
 class ExynosMultiFormatCodecH264Encoder : public H264Encoder
 {
 private:
+    std::vector<uint8_t> pps;
+    std::vector<uint8_t> sps;
     io_dev *mfc;
     // Bridge to MFC input
     io_dev *inputBridge;
@@ -49,11 +51,13 @@ private:
     io_dev *outputBridge;
     io_dev *deviceChain[3];
 
+    void tryExtractSPSandPPS(std::vector<uint8_t> &data);
+
 public:
     bool encodeInPlace(sensor_msgs::CompressedImage *image,
             bool *keyFrame) override;
-
-    ExynosMultiFormatCodecH264Encoder(int width, int height);
+    
+    ExynosMultiFormatCodecH264Encoder(std::string path, int width, int height);
 
     ~ExynosMultiFormatCodecH264Encoder() override;
 };
