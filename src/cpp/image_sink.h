@@ -17,35 +17,20 @@
  * limitations under the License.
  *
  *********************************************************************/
-#ifndef ROSPILOT_USB_CAMERA_H
-#define ROSPILOT_USB_CAMERA_H
+#ifndef ROSPILOT_IMAGE_SINK_H
+#define ROSPILOT_IMAGE_SINK_H
 
 #include<sensor_msgs/CompressedImage.h>
-#include<base_camera.h>
+
 namespace rospilot {
 
-class UsbCamera : public BaseCamera
+class ImageSink 
 {
-private:
-    int width;
-    int height;
-    rospilot::Resolutions resolutions;
-
 public:
-    int getWidth();
-
-    int getHeight();
-    
-    rospilot::Resolutions getSupportedResolutions() override;
-
-    bool getLiveImage(sensor_msgs::CompressedImage *image) override;
-    
-    bool captureImage(sensor_msgs::CompressedImage *image) override;
-
-    UsbCamera(std::string device, int width, int height, int framerate);
-
-    ~UsbCamera();
+    // thread-safe
+    virtual void addFrame(sensor_msgs::CompressedImage *image, bool keyFrame) = 0;
 };
 
 }
+
 #endif
