@@ -34,20 +34,23 @@ extern "C" {
 #include <libavformat/avformat.h>
 }
 
+namespace rospilot {
+
 using namespace std::chrono;
 
-SoftwareVideoRecorder::SoftwareVideoRecorder(int width, int height,
-        PixelFormat pixelFormat, AVCodecID codecId)
+SoftwareVideoRecorder::SoftwareVideoRecorder(PixelFormat pixelFormat, H264Settings settings)
 {
     av_register_all();
-    this->width = width;
-    this->height = height;
+    this->width = settings.width;
+    this->height = settings.height;
     this->pixelFormat = pixelFormat;
-    this->codecId = codecId;
+    this->settings = settings;
 }
 
-void SoftwareVideoRecorder::writeFrame(sensor_msgs::CompressedImage *image, bool keyFrame)
+void SoftwareVideoRecorder::addFrame(sensor_msgs::CompressedImage *image, bool keyFrame)
 {
+    // acquire lock so that we can read this->recording
+    std::lock_guard<std::mutex> guard(lock);
     if (!recording) {
         return;
     }
@@ -98,7 +101,7 @@ AVStream *SoftwareVideoRecorder::createVideoStream(AVFormatContext *oc)
     AVStream *stream;
     AVCodec *codec;
 
-    codec = avcodec_find_encoder(codecId);
+    codec = avcodec_find_encoder(AV_CODEC_ID_H264);
     if (!codec) {
         ROS_ERROR("codec not found");
     }
@@ -111,13 +114,30 @@ AVStream *SoftwareVideoRecorder::createVideoStream(AVFormatContext *oc)
     c = stream->codec;
     avcodec_get_context_defaults3(c, codec);
 
-    c->codec_id = codecId;
-    c->bit_rate = 1000 * 1000;
+    c->codec_id = AV_CODEC_ID_H264;
+    c->bit_rate = this->settings.bit_rate;
     c->width = this->width;
     c->height = this->height;
     c->time_base.den = FPS;
     c->time_base.num = 1;
-    c->gop_size = 12;
+    c->gop_size = this->settings.gop_size;
+    // Not sure this does anything, so set the "profile" on priv_data also
+    if (settings.profile == CONSTRAINED_BASELINE) {
+        c->profile = FF_PROFILE_H264_CONSTRAINED_BASELINE;
+        av_opt_set(c->priv_data, "profile", "baseline", AV_OPT_SEARCH_CHILDREN);
+    }
+    else if (settings.profile == HIGH) {
+        c->profile = FF_PROFILE_H264_HIGH;
+        av_opt_set(c->priv_data, "profile", "high", AV_OPT_SEARCH_CHILDREN);
+    }
+    else {
+        ROS_ERROR("Unknown H264 profile");
+    }
+    if (settings.zero_latency) {
+        av_opt_set(c->priv_data, "tune", "zerolatency", AV_OPT_SEARCH_CHILDREN);
+        av_opt_set(c->priv_data, "preset", "ultrafast", AV_OPT_SEARCH_CHILDREN);
+    }
+    c->level = this->settings.level;
     c->pix_fmt = this->pixelFormat;
     c->flags |= CODEC_FLAG_GLOBAL_HEADER;
 
@@ -126,9 +146,13 @@ AVStream *SoftwareVideoRecorder::createVideoStream(AVFormatContext *oc)
 
 bool SoftwareVideoRecorder::start(const char *name)
 {
+    AVCodecID codecId = AV_CODEC_ID_H264;
+    std::lock_guard<std::mutex> guard(lock);
     filename = std::string(name);
     char tempname[] = "/tmp/XXXXXX";
-    mkstemp(tempname);
+    if (mkstemp(tempname) == -1) {
+        ROS_FATAL("Cannot create temp directory to save video");
+    }
     tempFilename = std::string(tempname);
     formatContext = avformat_alloc_context();
     formatContext->oformat = av_guess_format(nullptr, name, nullptr);
@@ -175,6 +199,7 @@ bool SoftwareVideoRecorder::start(const char *name)
 
 bool SoftwareVideoRecorder::stop()
 {
+    std::lock_guard<std::mutex> guard(lock);
     recording = false;
     av_write_trailer(formatContext);
     avcodec_close(videoStream->codec);
@@ -198,3 +223,4 @@ SoftwareVideoRecorder::~SoftwareVideoRecorder()
 {
 }
 
+}

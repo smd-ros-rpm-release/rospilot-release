@@ -68,8 +68,9 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
         });
     };
 })
-.factory('Camera', function ($rosservice) {
+.factory('Camera', function ($rosservice, $rostopic) {
     return {
+        resolutions: $rostopic('/rospilot/camera/resolutions', 'rospilot/Resolutions'),
         take_picture: $rosservice('/rospilot/camera/capture_image', 'std_srvs/Empty'),
         start_recording: $rosservice('/rospilot/camera/start_record', 'std_srvs/Empty'),
         stop_recording: $rosservice('/rospilot/camera/stop_record', 'std_srvs/Empty')
@@ -109,26 +110,44 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
 .controller('rospilot', function ($scope, $route) {
     $scope.$route = $route;
 })
-.controller('settings', function ($scope, $rosparam, $rosservice) {
+.controller('settings', function ($scope, $rosparam, $rosservice, Camera) {
     var shutdownService = $rosservice('/rospilot/shutdown', 'std_srvs/Empty');
     var globService = $rosservice('/rospilot/glob', 'rospilot/Glob');
-    $scope.selected_codec = '';
-    $scope.codecs = ['h264', 'mjpeg'];
     $scope.selected_video_device = '';
     $scope.video_devices = [];
     $scope.shutdown = shutdownService;
-    $rosparam.get('/rospilot/camera/codec',
-        function(value) {
-            $scope.selected_codec = value;
-            $scope.$apply();
-        }
-    );
     $rosparam.get('/rospilot/camera/video_device',
         function(value) {
             $scope.selected_video_device = value;
             $scope.$apply();
         }
     );
+    $scope.resolutions = [];
+    $scope.selected_resolution = '';
+    Camera.resolutions.subscribe(function(resolutions) {
+        var options = $.map(resolutions.resolutions, function(value) {
+            return value.width + 'x' + value.height;
+        });
+        $scope.resolutions = options;
+        $scope.$apply();
+    });
+    $rosparam.get('/rospilot/camera/image_width',
+        function(width) {
+            $rosparam.get('/rospilot/camera/image_height',
+                function(height) {
+                    $scope.selected_resolution = width + 'x' + height;
+                    $scope.$apply();
+                }
+            );
+        }
+    );
+    $scope.$watch('selected_resolution', function(new_resolution) {
+        if (new_resolution) {
+            var parts = new_resolution.split('x');
+            $rosparam.set('/rospilot/camera/image_width', parseInt(parts[0]));
+            $rosparam.set('/rospilot/camera/image_height', parseInt(parts[1]));
+        }
+    });
     globService({pattern: '/dev/video*'}, function(result) {
         $scope.video_devices = result.paths.sort();
         $scope.$apply();
@@ -137,11 +156,6 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
     $scope.$watch('selected_video_device', function(new_device) {
         if (new_device) {
             $rosparam.set('/rospilot/camera/video_device', new_device);
-        }
-    });
-    $scope.$watch('selected_codec', function(new_codec) {
-        if (new_codec) {
-            $rosparam.set('/rospilot/camera/codec', new_codec);
         }
     });
 })
@@ -168,6 +182,7 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
   $scope.data = {'channel': []};
   RCState.subscribe(function(rcstate) {
       $scope.data = rcstate;
+      $scope.$apply();
   });
 })
 .controller('imu', function ($scope, IMU) {
@@ -191,6 +206,7 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
         }
         series.addPoint([x, data.accel.z], redraw, shift);
       }
+      $scope.$apply();
   });
 })
 .controller('status', function ($scope, $timeout, Status) {
@@ -207,6 +223,7 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
   };
   Status.subscribe(function(status) {
       $scope.data = status;
+      $scope.$apply();
   });
 })
 .controller('position', function ($scope, $timeout, Position, Waypoints) {
@@ -232,8 +249,8 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
           }
       ],
   });
-  $scope.server_name = window.location.hostname;
-  var mapnik_url = 'http://' + $scope.server_name + ':8086/ex/{z}/{x}/{y}.png';
+  var server_name = window.location.hostname;
+  var mapnik_url = 'http://' + server_name + ':8086/ex/{z}/{x}/{y}.png';
 
   L.tileLayer(mapnik_url, {
       maxZoom: 18,
@@ -269,12 +286,15 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
         // XXX: This should be moved
           $scope.waypoint_marker.setLatLng([lat, lng]);
       }
+      $scope.$apply();
   });
 
+  $scope.data = {latitude: 0, longitude: 0};
   Position.subscribe(function(position) {
       $scope.data = position;
       // XXX: This should be moved
       $scope.marker.setLatLng([position.latitude, position.longitude]);
+      $scope.$apply();
   });
 })
 .controller('attitude', function ($scope, Attitude) {
@@ -319,6 +339,7 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
       }
 
       $scope.data = attitude;
+      $scope.$apply();
   });
 })
 .controller('graphs', function($scope) {
@@ -372,19 +393,53 @@ angular.module('rospilot', ['ngRoute', 'ngResource'])
     }]
   });
 })
-.controller('camera', function($scope, $timeout, Media, Camera) {
+.controller('camera', function($scope, $timeout, $http, $rosparam, Media, Camera) {
   $scope.media = [];
+
+  $scope.destroyed = false;
+  $scope.$on("$destroy", function() {$scope.destroyed = true});
 
   (function tick() {
       Media.query(function(data) {
           if (data.length != $scope.media.length) {
             $scope.media = data;
           }
+          if ($scope.destroyed) {
+            return;
+          }
           $timeout(tick, 1000);
       });
   })();
 
-  $scope.server_name = window.location.hostname;
+  $scope.destroyed = false;
+  $scope.$on("$destroy", function() {$scope.destroyed = true});
+
+  var server_name = window.location.hostname;
+
+  // Generate a random client id for fetching the stream
+  var clientId = Math.floor(Math.random() * 1000 * 1000 * 1000);
+  var player = new Player({size: {height: 480, width: 640}});
+  document.querySelector('#video').appendChild(player.canvas);
+  var h264Url = 'http://' + server_name + ':8666/h264/' + clientId;
+  
+  function nextFrame() {
+      $http.get(h264Url, {responseType: 'arraybuffer'})
+      .success(function(data) {
+        player.decode(new Uint8Array(data));
+        if ($scope.destroyed) {
+            return;
+        }
+        $timeout(nextFrame, 1);
+      })
+      .error(function() {
+        if ($scope.destroyed) {
+            return;
+        }
+        $timeout(nextFrame, 1000);
+      });
+  };
+  nextFrame();
+
   $scope.take_picture = Camera.take_picture;
 
   $scope.recording = false;
