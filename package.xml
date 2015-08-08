@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package>
   <name>rospilot</name>
-  <version>0.2.5</version>
+  <version>1.0.0</version>
   <description>rospilot</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag --> 
@@ -48,16 +48,17 @@
   <build_depend>roslint</build_depend>
   <build_depend>libgphoto-dev</build_depend>
   <build_depend>roscpp</build_depend>
-  <build_depend>rospilot_deps</build_depend>
   <build_depend>ffmpeg</build_depend>
   <build_depend>libnl-3-dev</build_depend>
+  <build_depend>libmicrohttpd</build_depend>
 
+  <run_depend>vision_opencv</run_depend>
   <run_depend>libnl-3</run_depend>
   <run_depend>rosbash</run_depend>
   <run_depend>dnsmasq</run_depend>
   <run_depend>hostapd</run_depend>
-  <run_depend>rospilot_deps</run_depend>
   <run_depend>rospy</run_depend>
+  <run_depend>mavlink</run_depend>
   <run_depend>message_runtime</run_depend>
   <run_depend>sensor_msgs</run_depend>
   <run_depend>geometry_msgs</run_depend>

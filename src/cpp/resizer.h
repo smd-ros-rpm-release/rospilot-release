@@ -17,35 +17,46 @@
  * limitations under the License.
  *
  *********************************************************************/
-#ifndef ROSPILOT_USB_CAMERA_H
-#define ROSPILOT_USB_CAMERA_H
+#ifndef ROSPILOT_RESIZER_H
+#define ROSPILOT_RESIZER_H
 
 #include<sensor_msgs/CompressedImage.h>
-#include<base_camera.h>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libswscale/swscale.h>
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(55,28,1)
+#include <libavutil/frame.h>
+#endif
+}
+
 namespace rospilot {
 
-class UsbCamera : public BaseCamera
+class Resizer 
 {
 private:
-    int width;
-    int height;
-    rospilot::Resolutions resolutions;
+    SwsContext *context;
+    AVFrame *sourceFrame;
+    AVFrame *outputFrame;
+    uint8_t *outputBuffer;
+    int outputBufferSize;
+    PixelFormat pixelFormat;
+    int originalWidth, originalHeight, targetWidth, targetHeight;
 
 public:
-    int getWidth();
+    bool resizeInPlace(sensor_msgs::CompressedImage *image);
 
-    int getHeight();
-    
-    rospilot::Resolutions getSupportedResolutions() override;
+    Resizer(
+        int originalWidth,
+        int originalHeight,
+        int targetWidth,
+        int targetHeight,
+        PixelFormat pixelFormat);
 
-    bool getLiveImage(sensor_msgs::CompressedImage *image) override;
-    
-    bool captureImage(sensor_msgs::CompressedImage *image) override;
-
-    UsbCamera(std::string device, int width, int height, int framerate);
-
-    ~UsbCamera();
+    ~Resizer();
 };
 
 }
+
 #endif
+

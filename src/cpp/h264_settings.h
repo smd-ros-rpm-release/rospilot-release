@@ -17,35 +17,28 @@
  * limitations under the License.
  *
  *********************************************************************/
-#ifndef ROSPILOT_USB_CAMERA_H
-#define ROSPILOT_USB_CAMERA_H
+#ifndef ROSPILOT_H264_SETTINGS_H
+#define ROSPILOT_H264_SETTINGS_H
 
-#include<sensor_msgs/CompressedImage.h>
-#include<base_camera.h>
 namespace rospilot {
 
-class UsbCamera : public BaseCamera
+enum H264Profile
 {
-private:
-    int width;
+    CONSTRAINED_BASELINE,
+    HIGH
+};
+
+struct H264Settings
+{
     int height;
-    rospilot::Resolutions resolutions;
-
-public:
-    int getWidth();
-
-    int getHeight();
-    
-    rospilot::Resolutions getSupportedResolutions() override;
-
-    bool getLiveImage(sensor_msgs::CompressedImage *image) override;
-    
-    bool captureImage(sensor_msgs::CompressedImage *image) override;
-
-    UsbCamera(std::string device, int width, int height, int framerate);
-
-    ~UsbCamera();
+    int width;
+    int level;
+    int gop_size;
+    int bit_rate;
+    bool zero_latency;
+    H264Profile profile;
 };
 
 }
+
 #endif
