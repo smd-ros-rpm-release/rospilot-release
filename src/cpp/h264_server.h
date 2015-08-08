@@ -17,35 +17,60 @@
  * limitations under the License.
  *
  *********************************************************************/
-#ifndef ROSPILOT_USB_CAMERA_H
-#define ROSPILOT_USB_CAMERA_H
+#ifndef ROSPILOT_H264_SERVER_H
+#define ROSPILOT_H264_SERVER_H
 
+#include<mutex>
+#include<condition_variable>
+#include<vector>
+#include<chrono>
+#include<map>
+
+#include<microhttpd.h>
 #include<sensor_msgs/CompressedImage.h>
-#include<base_camera.h>
+
+#include<image_sink.h>
+
 namespace rospilot {
 
-class UsbCamera : public BaseCamera
+using namespace std::chrono;
+
+struct ClientSession
+{
+    ClientSession()
+    {
+        keyFrame = false;
+        lastAccessTime = high_resolution_clock::now();
+    }
+    std::vector<uint8_t> frameData;
+    bool keyFrame;
+    time_point<high_resolution_clock> lastAccessTime;
+};
+
+class H264Server : public ImageSink
 {
 private:
-    int width;
-    int height;
-    rospilot::Resolutions resolutions;
+    std::condition_variable frameAvailable;
+    std::mutex lock;
+    std::map<std::string, ClientSession> clients;
+    MHD_Daemon *daemon = nullptr;
 
 public:
-    int getWidth();
+    // thread-safe
+    void addFrame(sensor_msgs::CompressedImage *image, bool keyFrame) override;
 
-    int getHeight();
-    
-    rospilot::Resolutions getSupportedResolutions() override;
+    // thread-safe
+    MHD_Response* readFrames(std::string client);
 
-    bool getLiveImage(sensor_msgs::CompressedImage *image) override;
-    
-    bool captureImage(sensor_msgs::CompressedImage *image) override;
+    // thread-safe
+    void start();
 
-    UsbCamera(std::string device, int width, int height, int framerate);
+    // thread-safe
+    void stop();
 
-    ~UsbCamera();
+    ~H264Server();
 };
 
 }
+
 #endif

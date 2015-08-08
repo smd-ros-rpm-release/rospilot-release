@@ -17,35 +17,37 @@
  * limitations under the License.
  *
  *********************************************************************/
-#ifndef ROSPILOT_USB_CAMERA_H
-#define ROSPILOT_USB_CAMERA_H
+#ifndef ROSPILOT_BACKGROUND_IMAGE_SINK_H
+#define ROSPILOT_BACKGROUND_IMAGE_SINK_H
 
+#include<future>
+
+#include<transcoders.h>
+#include<resizer.h>
+#include<image_sink.h>
 #include<sensor_msgs/CompressedImage.h>
-#include<base_camera.h>
+
 namespace rospilot {
 
-class UsbCamera : public BaseCamera
+class BackgroundImageSink 
 {
 private:
-    int width;
-    int height;
-    rospilot::Resolutions resolutions;
+    ImageSink * sink;
+    H264Encoder * encoder;
+    Resizer * resizer;
+    std::future<void> sinkFuture;
 
 public:
-    int getWidth();
+    // encoder may be null to indicate that no encoding is needed
+    // NOTE: imageSink will not be released
+    BackgroundImageSink(ImageSink *imageSink, H264Encoder *h264Encoder, Resizer *resizer);
 
-    int getHeight();
-    
-    rospilot::Resolutions getSupportedResolutions() override;
+    // thread-safe
+    void addFrame(sensor_msgs::CompressedImage const *image);
 
-    bool getLiveImage(sensor_msgs::CompressedImage *image) override;
-    
-    bool captureImage(sensor_msgs::CompressedImage *image) override;
-
-    UsbCamera(std::string device, int width, int height, int framerate);
-
-    ~UsbCamera();
+    ~BackgroundImageSink();
 };
 
 }
+
 #endif

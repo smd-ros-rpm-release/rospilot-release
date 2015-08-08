@@ -21,6 +21,8 @@
 #define ROSPILOT_BASE_CAMERA_H
 
 #include<sensor_msgs/CompressedImage.h>
+#include<rospilot/Resolutions.h>
+namespace rospilot {
 
 class BaseCamera
 {
@@ -39,7 +41,11 @@ public:
      */
     virtual bool captureImage(sensor_msgs::CompressedImage *image) = 0;
 
+    virtual Resolutions getSupportedResolutions() = 0;
+
     virtual ~BaseCamera() {};
 };
+
+}
 
 #endif
