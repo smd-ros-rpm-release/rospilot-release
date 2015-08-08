@@ -27,19 +27,48 @@
 #include<sys/ioctl.h>
 #include<fcntl.h>
 #include<errno.h>
+#include<mutex>
 
 #include<ros/ros.h>
 #include<rospilot/CaptureImage.h>
+#include<rospilot/Resolutions.h>
 #include<std_srvs/Empty.h>
 #include<sensor_msgs/CompressedImage.h>
 
+#include<background_image_sink.h>
 #include<ptp.h>
 #include<usb_camera.h>
 #include<video_recorder.h>
 #include<transcoders.h>
+#include<resizer.h>
+#include<h264_server.h>
 
 extern "C" {
 #include <linux/videodev2.h>
+}
+
+namespace rospilot {
+
+static int ffmpegLockManager(void **mtx, enum AVLockOp op)
+{
+ switch(op) {
+ case AV_LOCK_CREATE:
+   *mtx = new std::mutex();
+   if(!*mtx)
+     return 1;
+   return 0;
+ case AV_LOCK_OBTAIN:
+   ((std::mutex *) *mtx)->lock();
+   return 0;
+ case AV_LOCK_RELEASE:
+   ((std::mutex *) *mtx)->unlock();
+   return 0;
+ case AV_LOCK_DESTROY:
+   delete (std::mutex *) *mtx;
+   *mtx = nullptr;
+   return 0;
+ }
+ return 1;
 }
 
 using namespace std::chrono;
@@ -52,54 +81,36 @@ private:
     // are called in spinOnce() in the main thread
     BaseCamera *camera = nullptr;
     JpegDecoder *jpegDecoder = nullptr;
-    H264Encoder *h264Encoder = nullptr;
     SoftwareVideoRecorder *videoRecorder = nullptr;
+    BackgroundImageSink *liveStream = nullptr;
+    BackgroundImageSink *recorder = nullptr;
+    H264Server h264Server;
+
+    ros::Publisher resolutionsTopic;
     ros::Publisher imagePub;
     ros::ServiceServer captureServiceServer;
     ros::ServiceServer startRecordServiceServer;
     ros::ServiceServer stopRecordServiceServer;
 
     std::string videoDevice;
-    std::string codec; // "mjpeg" or "h264"
     std::string mfcPath;
-    AVCodecID codecId;
     std::string mediaPath;
-    int width;
-    int height;
+    int cameraWidth;
+    int cameraHeight;
     int framerate;
 
 private:
     bool sendPreview()
     {
-        static time_point<high_resolution_clock> sixtyFramesAgo = high_resolution_clock::now();
-        static int frameRateCounter = 0;
-
         sensor_msgs::CompressedImage image;
         if(camera != nullptr && camera->getLiveImage(&image)) {
             bool keyFrame = false;
             bool transcodedSuccessfully = false;
-            if (codec == "mjpeg") {
-                keyFrame = true;
-                transcodedSuccessfully = true;
-            }
             imagePub.publish(image);
-            if (codec == "h264" && image.format == "jpeg") {
-                jpegDecoder->decodeInPlace(&image);
-                transcodedSuccessfully = h264Encoder->encodeInPlace(&image, 
-                        &keyFrame);
-            }
-            if (videoRecorder != nullptr && transcodedSuccessfully) {
-                videoRecorder->writeFrame(&image, keyFrame);
-            }
+            jpegDecoder->decodeInPlace(&image);
+            liveStream->addFrame(&image);
+            recorder->addFrame(&image);
 
-            frameRateCounter++;
-            if (frameRateCounter >= 60) {
-                time_point<high_resolution_clock> currentTime = high_resolution_clock::now();
-                duration<double> duration = (currentTime - sixtyFramesAgo);
-                //ROS_INFO("Camera frame rate %f", frameRateCounter / duration.count());
-                frameRateCounter = 0;
-                sixtyFramesAgo = currentTime;
-            }
             return true;
         }
         return false;
@@ -111,32 +122,64 @@ private:
             delete camera;
         }
         camera = createCamera();
-        PixelFormat pixelFormat;
-        if (codec == "h264") {
-            pixelFormat = PIX_FMT_YUV420P;
-        }
-        else if (codec == "mjpeg") {
-            // TODO: Do we need to detect this dynamically?
-            // Different cameras might be 4:2:0, 4:2:2, or 4:4:4
-            pixelFormat = PIX_FMT_YUVJ422P;
-        }
+        resolutionsTopic.publish(camera->getSupportedResolutions());
+        PixelFormat pixelFormat = PIX_FMT_YUV420P;
 
         std::string videoDevice;
         node.param("video_device", videoDevice, std::string("/dev/video0"));
 
+        H264Settings recordingH264Settings;
+        recordingH264Settings.height = cameraHeight;
+        recordingH264Settings.width = cameraWidth;
+        recordingH264Settings.level = 41;
+        recordingH264Settings.gop_size = 30;
+        recordingH264Settings.zero_latency = false;
+        recordingH264Settings.profile = HIGH;
+        recordingH264Settings.height = cameraHeight;
+        recordingH264Settings.width = cameraWidth;
+        recordingH264Settings.bit_rate = 4 * cameraWidth * cameraHeight;
+
+        double aspectRatio = cameraHeight / (double) cameraWidth;
+        H264Settings liveH264Settings;
+        liveH264Settings.height = (int) (aspectRatio * 640);
+        liveH264Settings.width = 640;
+        liveH264Settings.level = 41;
+        liveH264Settings.gop_size = 12;
+        liveH264Settings.bit_rate = 1000 * 1000;
+        liveH264Settings.zero_latency = true;
+        liveH264Settings.profile = CONSTRAINED_BASELINE;
+
         if (jpegDecoder != nullptr) {
             delete jpegDecoder;
         }
-        jpegDecoder = new JpegDecoder(width, height, pixelFormat);
-        if (h264Encoder != nullptr) {
-            delete h264Encoder;
+        jpegDecoder = new JpegDecoder(cameraWidth, cameraHeight, pixelFormat);
+
+        if (liveStream != nullptr) {
+            delete liveStream;
         }
-        h264Encoder = createEncoder();
+        Resizer *resizer = new Resizer(
+                cameraWidth,
+                cameraHeight,
+                liveH264Settings.width,
+                liveH264Settings.height,
+                pixelFormat);
+        liveStream = new BackgroundImageSink(
+                &h264Server,
+                createEncoder(liveH264Settings),
+                resizer);
+
         if (videoRecorder != nullptr) {
             delete videoRecorder;
         }
-        ROS_INFO("Recording in %s", codec.c_str());
-        videoRecorder = new SoftwareVideoRecorder(width, height, pixelFormat, codecId);
+        videoRecorder = new SoftwareVideoRecorder(pixelFormat, recordingH264Settings);
+        if (recorder != nullptr) {
+            delete recorder;
+        }
+        recorder = new BackgroundImageSink(
+                videoRecorder,
+                createEncoder(recordingH264Settings),
+                nullptr
+        );
     }
 
     BaseCamera *createCamera()
@@ -145,19 +188,9 @@ private:
         node.param("camera_type", cameraType, std::string("usb"));
 
         node.param("video_device", videoDevice, std::string("/dev/video0"));
-        node.param("image_width", width, 1920);
-        node.param("image_height", height, 1080);
+        node.param("image_width", cameraWidth, 1920);
+        node.param("image_height", cameraHeight, 1080);
         node.param("framerate", framerate, 30);
-        node.param("codec", codec, std::string("mjpeg"));
-        if (codec == "h264") {
-            codecId = AV_CODEC_ID_H264;
-        }
-        else if (codec == "mjpeg") {
-            codecId = AV_CODEC_ID_MJPEG;
-        }
-        else {
-            ROS_FATAL("Unknown codec: %s", codec.c_str());
-        }
         node.param("media_path", mediaPath, std::string("~/.rospilot/media"));
         wordexp_t p;
         wordexp(mediaPath.c_str(), &p, 0);
@@ -175,13 +208,15 @@ private:
             return new PtpCamera();
         }
         else if (cameraType == "usb") {
-            ROS_INFO("Requesting camera res %dx%d", width, height);
-            UsbCamera *camera = new UsbCamera(videoDevice, width, height, framerate);
+            ROS_INFO("Requesting camera res %dx%d", cameraWidth, cameraHeight);
+            UsbCamera *camera = new UsbCamera(videoDevice, cameraWidth, cameraHeight, framerate);
             // Read the width and height, since the camera may have altered it to
             // something it supports
-            width = camera->getWidth();
-            height = camera->getHeight();
-            ROS_INFO("Camera selected res %dx%d", width, height);
+            cameraWidth = camera->getWidth();
+            cameraHeight = camera->getHeight();
+            node.setParam("image_width", cameraWidth);
+            node.setParam("image_height", cameraHeight);
+            ROS_INFO("Camera selected res %dx%d", cameraWidth, cameraHeight);
             return camera;
         }
         else {
@@ -193,6 +228,8 @@ private:
 public:
     CameraNode() : node("~") 
     {
+        resolutionsTopic = node.advertise<rospilot::Resolutions>(
+                "resolutions", 1, true);
         imagePub = node.advertise<sensor_msgs::CompressedImage>(
                 "image_raw/compressed", 1);
         captureServiceServer = node.advertiseService(
@@ -208,6 +245,12 @@ public:
                 &CameraNode::stopRecordHandler,
                 this);
         mfcPath = findMfcDevice();
+
+        // Install lock manager to make ffmpeg thread-safe
+        if (av_lockmgr_register(ffmpegLockManager)) {
+            ROS_FATAL("Failed to make ffmpeg thread-safe");
+        }
+
         initCameraAndEncoders();
     }
 
@@ -259,15 +302,15 @@ public:
         return "";
     }
 
-    H264Encoder *createEncoder()
+    H264Encoder *createEncoder(H264Settings settings)
     {
-        if (mfcPath.size() > 0) {
+        if (mfcPath.size() > 0 && !settings.zero_latency) {
             ROS_INFO("Using hardware encoder");
-            return new ExynosMultiFormatCodecH264Encoder(mfcPath, width, height);
+            return new ExynosMultiFormatCodecH264Encoder(mfcPath, settings);
         }
         else {
             ROS_INFO("Using software encoder");
-            return new SoftwareH264Encoder(width, height);
+            return new SoftwareH264Encoder(settings);
         }
     }
 
@@ -277,23 +320,29 @@ public:
             delete camera;
         }
         delete jpegDecoder;
-        delete h264Encoder;
+        delete recorder;
+        delete liveStream;
         delete videoRecorder;
+        av_lockmgr_register(nullptr);
     }
 
     bool spin()
     {
         ROS_INFO("camera node is running.");
-                
+        h264Server.start();
         while (node.ok())
         {
             // Process any pending service callbacks
             ros::spinOnce();
+            int newWidth;
+            node.getParam("image_width", newWidth);
+            int newHeight;
+            node.getParam("image_height", newHeight);
             std::string newVideoDevice;
             node.getParam("video_device", newVideoDevice);
-            std::string newCodec;
-            node.param("codec", newCodec, std::string("mjpeg"));
-            if (newVideoDevice != videoDevice || newCodec != codec) {
+            if (newVideoDevice != videoDevice || 
+                    newWidth != cameraWidth ||
+                    newHeight != cameraHeight) {
                 initCameraAndEncoders();
             }
             if(!sendPreview()) {
@@ -303,6 +352,7 @@ public:
             // Run at 1kHz
             usleep(1000);
         }
+        h264Server.stop();
         return true;
     }
     
@@ -351,10 +401,13 @@ public:
     }
 };
 
+}
+
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "camera");
-    CameraNode a;
+    rospilot::CameraNode a;
     a.spin();
     return 0;
 }
+
