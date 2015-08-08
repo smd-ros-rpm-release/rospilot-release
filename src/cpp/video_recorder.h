@@ -20,18 +20,25 @@
 #ifndef ROSPILOT_VIDEO_RECORDER_H
 #define ROSPILOT_VIDEO_RECORDER_H
 
+#include "h264_settings.h"
+
+#include<mutex>
 #include<chrono>
 
 #include<sensor_msgs/CompressedImage.h>
+
+#include<image_sink.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 }
 
+namespace rospilot {
+
 using namespace std::chrono;
 
-class SoftwareVideoRecorder
+class SoftwareVideoRecorder : public ImageSink
 {
 private:
     static const int FPS = 60;
@@ -48,15 +55,19 @@ private:
     int width;
     int height;
     PixelFormat pixelFormat;
-    AVCodecID codecId;
+    H264Settings settings;
+    std::mutex lock;
 
 public:
-    SoftwareVideoRecorder(int width, int height, PixelFormat pixelFormat, AVCodecID codecId);
+    SoftwareVideoRecorder(PixelFormat pixelFormat, H264Settings settings);
     
-    void writeFrame(sensor_msgs::CompressedImage *image, bool keyFrame);
+    // thread-safe
+    void addFrame(sensor_msgs::CompressedImage *image, bool keyFrame) override;
 
+    // thread-safe
     bool start(const char *name);
     
+    // thread-safe
     bool stop();
 
     ~SoftwareVideoRecorder();
@@ -64,5 +75,7 @@ public:
 private:
     AVStream *createVideoStream(AVFormatContext *oc);
 };
+
+}
 
 #endif
